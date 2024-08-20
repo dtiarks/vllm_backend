@@ -40,6 +40,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.lora.request import LoRARequest
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
+from vllm.model_executor.guided_decoding.outlines_logits_processors import JSONLogitsProcessor
 
 from utils.metrics import VllmStatLogger
 
@@ -67,6 +68,12 @@ class TritonPythonModel:
             {
                 "name": "exclude_input_in_output",
                 "data_type": "TYPE_BOOL",
+                "dims": [1],
+                "optional": True,
+            },
+            {
+                "name": "schema",
+                "data_type": "TYPE_STRING",
                 "dims": [1],
                 "optional": True,
             },
@@ -271,7 +278,7 @@ class TritonPythonModel:
 
         self.logger.log_info("[vllm] Shutdown complete")
 
-    def get_sampling_params_dict(self, params_json):
+    def get_sampling_params_dict(self, params_json, schema=None):
         """
         This functions parses the dictionary values into their
         expected format.
@@ -300,6 +307,13 @@ class TritonPythonModel:
         for k in int_keys:
             if k in params_dict:
                 params_dict[k] = int(params_dict[k])
+
+        if schema is not None:
+            tokenizer = self.llm_engine.engine.get_tokenizer()
+            json_lp = JSONLogitsProcessor(schema, tokenizer, whitespace_pattern=None)
+            logits_processors = params_dict.get("logits_processors", [])
+            logits_processors.append(json_lp)
+            params_dict["logits_processors"] = logits_processors
 
         return params_dict
 
@@ -413,9 +427,15 @@ class TritonPythonModel:
             else:
                 parameters = request.parameters()
 
-            sampling_params_dict = self.get_sampling_params_dict(parameters)
+            schema_tensor = pb_utils.get_input_tensor_by_name(request, "schema")
+            schema = None
+            if schema_tensor:
+                schema = schema_tensor.as_numpy()[0].decode("utf-8")
+
+            sampling_params_dict = self.get_sampling_params_dict(parameters, schema)
             lora_name = sampling_params_dict.pop("lora_name", None)
             sampling_params = SamplingParams(**sampling_params_dict)
+            self.logger.log_info("[vllm] Sampling params: {}".format(sampling_params))
             last_output = None
             prev_outputs = None
             lora_request = None

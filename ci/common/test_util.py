@@ -96,11 +96,18 @@ def create_vllm_request(
     model_name,
     send_parameters_as_tensor=True,
     exclude_input_in_output=None,
+    schema=None
 ):
     inputs = []
 
     inputs.append(grpcclient.InferInput("text_input", [1], "BYTES"))
     inputs[-1].set_data_from_numpy(np.array([prompt.encode("utf-8")], dtype=np.object_))
+
+    if schema is not None:
+        inputs.append(grpcclient.InferInput("schema", [1], "BYTES"))
+        inputs[-1].set_data_from_numpy(np.array(
+            [json.dumps(schema).encode("utf-8")], dtype=np.object_)
+        )
 
     inputs.append(grpcclient.InferInput("stream", [1], "BOOL"))
     inputs[-1].set_data_from_numpy(np.array([stream], dtype=bool))

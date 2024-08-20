@@ -35,6 +35,10 @@ from tritonclient.utils import *
 sys.path.append("../../common")
 from test_util import TestResultCollector, UserData, callback, create_vllm_request
 
+from enum import Enum
+
+from pydantic import BaseModel, constr
+
 PROMPTS = [
     "The most dangerous animal is",
     "The capital of France is",
@@ -46,7 +50,7 @@ SAMPLING_PARAMETERS = {"temperature": "0", "top_p": "1"}
 class VLLMTritonBackendTest(TestResultCollector):
     def setUp(self):
         self.triton_client = grpcclient.InferenceServerClient(url="localhost:8001")
-        self.vllm_model_name = "vllm_opt"
+        self.vllm_model_name = "vllm_model"
         self.python_model_name = "add_sub"
         self.vllm_load_test = "vllm_load_test"
 
@@ -115,6 +119,53 @@ class VLLMTritonBackendTest(TestResultCollector):
             stream=False,
             send_parameters_as_tensor=True,
             expected_output=expected_output,
+            model_name=self.vllm_model_name,
+        )
+
+    def test_schema_input_in_output_default(self):
+        """
+        Verifying default behavior for `exclude_input_in_output`
+        in non-streaming mode.
+        Expected result: prompt is returned with diffs.
+        """
+
+        class Weapon(str, Enum):
+            sword = "sword"
+            axe = "axe"
+            mace = "mace"
+            spear = "spear"
+            bow = "bow"
+            crossbow = "crossbow"
+
+        class Armor(str, Enum):
+            leather = "leather"
+            chainmail = "chainmail"
+            plate = "plate"
+
+        class Character(BaseModel):
+            name: constr(max_length=10)
+            age: int
+            armor: Armor
+            weapon: Weapon
+            strength: int
+
+        prompts = [
+            "Create a profile of a MMO character as valid JSON object: ",
+        ]
+        expected_output = [
+            b"The capital of France is the capital of the French Republic.\n\nThe capital of France is the capital"
+        ]
+        sampling_parameters = {"min_tokens": 20, "max_tokens": 100, "temperature": "0", "top_p": "1", "use_beam_search": True, "best_of": 4}
+        schema = Character.model_json_schema()
+        self._test_vllm_model(
+            prompts,
+            sampling_parameters,
+            stream=False,
+            send_parameters_as_tensor=True,
+            expected_output=expected_output,
+            exclude_input_in_output=False,
+            model_name=self.vllm_model_name,
+            schema=schema
         )
 
     def test_exclude_input_in_output_false(self):
@@ -172,6 +223,7 @@ class VLLMTritonBackendTest(TestResultCollector):
         exclude_input_in_output=None,
         expected_output=None,
         model_name="vllm_opt",
+        schema=None
     ):
         user_data = UserData()
         number_of_vllm_reqs = len(prompts)
@@ -186,6 +238,7 @@ class VLLMTritonBackendTest(TestResultCollector):
                 model_name,
                 send_parameters_as_tensor,
                 exclude_input_in_output=exclude_input_in_output,
+                schema=schema
             )
             self.triton_client.async_stream_infer(
                 model_name=model_name,
